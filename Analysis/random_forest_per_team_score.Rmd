@@ -1,0 +1,188 @@
+---
+title: "analysis_per_team_reg"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+chooseCRANmirror(graphics=FALSE, ind=62)
+if (!require("rsample")) install.packages("rsample") 
+if (!require("dplyr")) install.packages("dplyr") 
+if (!require("rpart")) install.packages("rpart") 
+if (!require("rpart.plot")) install.packages("rpart.plot") 
+if (!require("ipred")) install.packages("ipred") 
+if (!require("randomForest")) install.packages("randomForest")
+if (!require("ranger")) install.packages("ranger") 
+if (!require("caret")) install.packages("caret") 
+if (!require("MASS")) install.packages("MASS") 
+if (!require("e1071")) install.packages("e1071")
+
+library(rsample)      # data splitting, functions: initial_split 
+library(dplyr)        # data wrangling
+library(rpart)        # performing regression trees
+library(rpart.plot)   # plotting regression trees
+library(ipred)        # bagging
+library(randomForest) # basic implementation
+library(ranger)       # a faster implementation of randomForest
+library(caret)        # an aggregator package for performing many machine learning models
+library(MASS)         # dataset
+library(e1071)
+```
+
+
+Load in the data
+```{r}
+setwd("C:/Users/senic/OneDrive/Desktop/Masters/FALL_2021/ECO1400/Term_Paper/Data")
+dataset_full <- read.csv(file="All_Disper_1_2_3_2011_2018.csv", header=TRUE, sep=",", na = ".")
+names(dataset_full)
+```
+```{r}
+dataset_full <- dataset_full[dataset_full$HomeAveSal != 0, ]
+dataset_full <- dataset_full[dataset_full$HomeAveSal != 0, ]
+```
+
+```{r}
+summary(dataset_full$HomeScore)
+summary(dataset_full$AwayScore)
+
+```
+
+
+Create training (70%) and test (30%) sets for the datasetHousing::make_dataset() data.
+Use set.seed for reproducibility
+```{r}
+na.omit(dataset_full)
+
+set.seed(123)
+dataset_split <- initial_split(dataset_full, prop = 0.7)
+dataset_train <- training(dataset_split)
+dataset_test  <- testing(dataset_split)
+```
+
+
+Fit a regression tree
+```{r}
+m1 <- rpart(formula = HomeScore ~ HomeMaxSal + HomeAveSal + HomeDisper1 + HomeDisper2 + HomeDisper3, data = dataset_train, method = "anova")
+```
+
+
+Visualize the fitted tree 
+```{r}
+rpart.plot(m1, cex=0.5)
+```
+
+
+*************************** RANDOM FORESTS ***************************
+
+Random forests are a modification of bagging that builds a large collection of de-correlated trees, by inducing more randomness into the tree growing process. This is achieved in two stages:
+
+1. Bootstrap: similar to bagging, where each tree is grown to a bootstrap resampled data set.
+2. Split-variable randomization: each time a split is to be performed, the search for the split variable is limited to a random subset of m of the p variables. 
+
+Fit a random forest model
+```{r}
+rfHome <- randomForest(formula = HomeScore ~ HomeMaxSal + HomeAveSal + HomeDisper1 + HomeDisper2 + HomeDisper3, data = dataset_train, ntrees = 100, na.action=na.omit, importance=TRUE)
+rfHome
+rfAway <- randomForest(formula = AwayScore ~ AwayMaxSal + AwayAveSal + AwayDisper1 + AwayDisper2 + AwayDisper3, data = dataset_train, ntrees = 100, na.action=na.omit, importance=TRUE)
+rfAway
+rfHomeFull <- randomForest(formula = HomeScore ~ HomeMaxSal + AwayMaxSal + HomeAveSal + AwayAveSal + HomeDisper1 + AwayDisper1 + HomeDisper2 + AwayDisper2 + HomeDisper3 + AwayDisper3, data = dataset_train, ntrees = 100, na.action=na.omit, importance=TRUE)
+rfHomeFull
+rfAwayFull <- randomForest(formula = AwayScore ~ HomeMaxSal + AwayMaxSal + HomeAveSal + AwayAveSal + HomeDisper1 + AwayDisper1 + HomeDisper2 + AwayDisper2 + HomeDisper3 + AwayDisper3, data = dataset_train, ntrees = 100, na.action=na.omit, importance=TRUE)
+rfAwayFull
+
+```
+
+
+
+Plot the error rate
+```{r, fig.width=4, fig.height=3}
+plot(rfHome)
+plot(rfAway)
+plot(rfHomeFull)
+plot(rfAwayFull)
+```
+
+Out of sample prediction
+```{r}
+pred_randomForestHome <- predict(rfHome, newdata = dataset_test)
+head(pred_randomForestHome)
+pred_randomForestAway <- predict(rfAway, newdata = dataset_test)
+head(pred_randomForestAway)
+pred_randomForestHomeFull <- predict(rfHomeFull, newdata = dataset_test)
+head(pred_randomForestAway)
+pred_randomForestAwayFull <- predict(rfAwayFull, newdata = dataset_test)
+head(pred_randomForestAway)
+```
+
+Assess out-of-sample predictive accuracy
+```{r}
+RMSEHome <- RMSE(pred_randomForestHome, dataset_test$HomeScore)
+RMSEHome
+RMSEAway <- RMSE(pred_randomForestAway, dataset_test$AwayScore)
+RMSEAway
+RMSEHomeFull <- RMSE(pred_randomForestHomeFull, dataset_test$AwayScore)
+RMSEHomeFull
+RMSEAwayFull <- RMSE(pred_randomForestAwayFull, dataset_test$AwayScore)
+RMSEAwayFull
+```
+
+Compare to OLS
+```{r}
+base1 <- lm(formula = HomeScore ~ HomeMaxSal + HomeAveSal + HomeDisper1 + HomeDisper2 + HomeDisper3, dataset_full)
+yhat_base1 <- predict(base1, newdata = as.data.frame(dataset_test))
+base1_resid <- dataset_test$deltaScore - yhat_base1
+RMSE_base1 <- sqrt(mean(base1$residuals^2))
+RMSE_base1
+
+base2 <- lm(formula = AwayScore ~ AwayMaxSal + AwayAveSal + AwayDisper1 + AwayDisper2 + AwayDisper3, dataset_full)
+yhat_base2 <- predict(base2, newdata = as.data.frame(dataset_test))
+base2_resid <- dataset_test$deltaScore - yhat_base2
+RMSE_base2 <- sqrt(mean(base2$residuals^2))
+RMSE_base2
+
+base3 <- lm(formula = HomeScore ~ HomeMaxSal + AwayMaxSal + HomeAveSal + AwayAveSal + HomeDisper1 + AwayDisper1 + HomeDisper2 + AwayDisper2 + HomeDisper3 + AwayDisper3, dataset_full)
+yhat_base3 <- predict(base3, newdata = as.data.frame(dataset_test))
+base3_resid <- dataset_test$deltaScore - yhat_base3
+RMSE_base3 <- sqrt(mean(base3$residuals^2))
+RMSE_base3
+
+base4 <- lm(formula = AwayScore ~ HomeMaxSal + AwayMaxSal + HomeAveSal + AwayAveSal + HomeDisper1 + AwayDisper1 + HomeDisper2 + AwayDisper2 + HomeDisper3 + AwayDisper3, dataset_full)
+yhat_base4 <- predict(base4, newdata = as.data.frame(dataset_test))
+base4_resid <- dataset_test$deltaScore - yhat_base4
+RMSE_base4 <- sqrt(mean(base4$residuals^2))
+RMSE_base4
+```
+
+```{r}
+(RMSE_base1 - RMSEHome)/RMSE_base1 * 100
+(RMSE_base2 - RMSEAway)/RMSE_base2 * 100
+(RMSE_base3 - RMSEHomeFull)/RMSE_base3 * 100
+(RMSE_base4 - RMSEAwayFull)/RMSE_base4 * 100
+```
+
+
+
+
+
+
+```{r}
+varImpPlot(rfHome)
+varImpPlot(rfAway)
+varImpPlot(rfHomeFull)
+varImpPlot(rfAwayFull)
+```
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,146 @@
+---
+title: "Term_project"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(root.dir = "C:/Users/senic/OneDrive/Desktop/Masters/FALL_2021/ECO1400/Term_Paper/Data")
+```
+
+```{r}
+chooseCRANmirror(graphics=FALSE, ind=62)
+if (!require("rsample")) install.packages("rsample") 
+if (!require("dplyr")) install.packages("dplyr") 
+if (!require("rpart")) install.packages("rpart") 
+if (!require("rpart.plot")) install.packages("rpart.plot") 
+if (!require("ipred")) install.packages("ipred") 
+if (!require("randomForest")) install.packages("randomForest")
+if (!require("ranger")) install.packages("ranger") 
+if (!require("caret")) install.packages("caret") 
+if (!require("MASS")) install.packages("MASS") 
+if (!require("e1071")) install.packages("e1071")
+if (!require("stargazer")) install.packages("stargazer")
+
+library(stargazer)
+library(rsample)      # data splitting, functions: initial_split 
+library(dplyr)        # data wrangling
+library(rpart)        # performing regression trees
+library(rpart.plot)   # plotting regression trees
+library(ipred)        # bagging
+library(randomForest) # basic implementation
+library(ranger)       # a faster implementation of randomForest
+library(caret)        # an aggregator package for performing many machine learning models
+library(MASS)         # dataset
+library(e1071)
+```
+
+
+Load in the data
+```{r}
+setwd("C:/Users/senic/OneDrive/Desktop/Masters/FALL_2021/ECO1400/Term_Paper/Data")
+dataset_full <- read.csv(file="All_Disper_1_2_3_2011_2018.csv", header=TRUE, sep=",", na = ".")
+names(dataset_full)
+```
+```{r}
+dataset_full <- dataset_full[dataset_full$HomeAveSal != 0, ]
+dataset_full <- dataset_full[dataset_full$AwayAveSal != 0, ]
+```
+
+
+
+Add delta columns to the existing dataframe
+```{r}
+
+dataset_full$deltaScore = dataset_full$HomeScore/dataset_full$AwayScore
+dataset_full$deltaMaxSal = dataset_full$HomeMaxSal/dataset_full$AwayMaxSal
+dataset_full$deltaAveSal = dataset_full$HomeAveSal/dataset_full$AwayAveSal
+dataset_full$deltaDisper1 = dataset_full$HomeDisper1/dataset_full$AwayDisper1
+dataset_full$deltaDisper2 = dataset_full$HomeDisper2/dataset_full$AwayDisper2
+dataset_full$deltaDisper3 = dataset_full$HomeDisper3/dataset_full$AwayDisper3
+
+```
+
+
+```{r}
+stargazer(dataset_full, title=c("Summary Statistics"), summary.stat = c("mean", "sd", "min", "max", "p25", "median", "p75"), column.labels = c("Mean", "SD", "min", "max", "1st Q", "Median", "3rd Q"), keep=c("deltaMaxSal", "deltaAveSal", "deltaDisper1", "deltaDisper2", "deltaDisper3", "deltaScore", "HomeScore", "AwayScore", "HomeWinBinary"), order=c(5,6,7,8,9,4,3,1,2), covariate.labels=c("Home score", "Away score", "Home win", "score", "maxsal", "avesal", "disper1", "disper2", "disper3"), notes.append = FALSE, notes.align = "l",
+      notes = "\\parbox[t]{\\textwidth}{Note: All of these are ratio values (HomeStat/AwayStat) except for Home score and Away score}")
+
+```
+
+
+Create training (70%) and test (30%) sets for the datasetHousing::make_dataset() data.
+Use set.seed for reproducibility
+```{r}
+set.seed(123)
+dataset_split <- initial_split(dataset_full, prop = 0.7)
+dataset_train <- training(dataset_split)
+dataset_test  <- testing(dataset_split)
+```
+
+Fit a regression tree
+```{r}
+m1 <- rpart(formula = deltaScore ~ HomeMaxSal + AwayMaxSal + HomeAveSal + AwayAveSal + HomeDisper1 + AwayDisper1 + HomeDisper2 + AwayDisper2 + HomeDisper3 + AwayDisper3, data = dataset_train, method = "anova")
+```
+
+
+Visualize the fitted tree 
+```{r}
+rpart.plot(m1, cex=0.5)
+```
+
+
+
+*************************** RANDOM FORESTS ***************************
+
+Random forests are a modification of bagging that builds a large collection of de-correlated trees, by inducing more randomness into the tree growing process. This is achieved in two stages:
+
+1. Bootstrap: similar to bagging, where each tree is grown to a bootstrap resampled data set.
+2. Split-variable randomization: each time a split is to be performed, the search for the split variable is limited to a random subset of m of the p variables. 
+
+Fit a random forest model
+```{r}
+rf10 <- randomForest(formula = deltaScore ~ HomeMaxSal + AwayMaxSal + HomeAveSal + AwayAveSal + HomeDisper1 + AwayDisper1 + HomeDisper2 + AwayDisper2 + HomeDisper3 + AwayDisper3, data = dataset_train, ntrees = 100, na.action=na.omit, importance=TRUE)
+```
+
+```{r}
+rf10
+```
+
+Plot the error rate
+```{r, fig.width=4, fig.height=3}
+plot(rf10)
+```
+
+Out of sample prediction
+```{r}
+pred_randomForest10 <- predict(rf10, newdata = dataset_test)
+head(pred_randomForest10)
+```
+
+Assess out-of-sample predictive accuracy
+```{r}
+RMSE10 <- RMSE(pred_randomForest10, dataset_test$deltaScore)
+
+RMSE10
+
+```
+
+Compare to OLS
+```{r}
+base <- lm(formula = deltaScore ~ HomeMaxSal + AwayMaxSal + HomeAveSal + AwayAveSal + HomeDisper1 + AwayDisper1 + HomeDisper2 + AwayDisper2 + HomeDisper3 + AwayDisper3, dataset_full)
+yhat_base <- predict(base, newdata = as.data.frame(dataset_test))
+base_resid <- dataset_test$deltaScore - yhat_base
+RMSE_base <- sqrt(mean(base$residuals^2))
+RMSE_base
+```
+
+```{r}
+(RMSE_base - RMSE10)/RMSE_base * 100
+```
+
+
+```{r}
+varImpPlot(rf10)
+```
+
+
